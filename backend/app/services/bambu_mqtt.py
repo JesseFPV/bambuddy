@@ -178,6 +178,8 @@ class BambuMQTTClient:
                 )
 
             # Check for K-profile response (extrusion_cali)
+            if "command" in print_data:
+                logger.debug(f"[{self.serial_number}] Received command response: {print_data.get('command')}")
             if "command" in print_data and print_data.get("command") == "extrusion_cali_get":
                 self._handle_kprofile_response(print_data)
 
@@ -410,8 +412,14 @@ class BambuMQTTClient:
             message = {"pushing": {"command": "pushall"}}
             self._client.publish(self.topic_publish, json.dumps(message))
 
-    def connect(self):
-        """Connect to the printer MQTT broker."""
+    def connect(self, loop: asyncio.AbstractEventLoop | None = None):
+        """Connect to the printer MQTT broker.
+
+        Args:
+            loop: The asyncio event loop to use for thread-safe callbacks.
+                  If not provided, will try to get the running loop.
+        """
+        self._loop = loop
         self._client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=f"bambutrack_{self.serial_number}",
@@ -550,12 +558,17 @@ class BambuMQTTClient:
         self._kprofile_response_data = profiles
 
         # Signal that we received the response
+        # Use thread-safe method since MQTT callbacks run in a different thread
         if self._pending_kprofile_response:
-            self._pending_kprofile_response.set()
+            if self._loop and self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._pending_kprofile_response.set)
+            else:
+                # Fallback for when loop is not available
+                self._pending_kprofile_response.set()
 
         logger.info(f"[{self.serial_number}] Received {len(profiles)} K-profiles")
 
-    async def get_kprofiles(self, nozzle_diameter: str = "0.4", timeout: float = 5.0) -> list[KProfile]:
+    async def get_kprofiles(self, nozzle_diameter: str = "0.4", timeout: float = 10.0) -> list[KProfile]:
         """Request K-profiles from the printer.
 
         Args:
@@ -567,6 +580,13 @@ class BambuMQTTClient:
         """
         if not self._client or not self.state.connected:
             logger.warning(f"[{self.serial_number}] Cannot get K-profiles: not connected")
+            return []
+
+        # Capture current event loop for thread-safe callback
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning(f"[{self.serial_number}] No running event loop")
             return []
 
         # Set up response event
