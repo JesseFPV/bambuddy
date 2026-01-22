@@ -269,7 +269,8 @@ def generate_api_key() -> tuple[str, str, str]:
     # Generate a secure random API key (32 bytes = 64 hex characters)
     full_key = f"bb_{secrets.token_urlsafe(32)}"
     key_hash = get_password_hash(full_key)
-    key_prefix = full_key[:8] + "..." if len(full_key) > 8 else full_key
+    # Take first 8 characters only (database constraint is String(8))
+    key_prefix = full_key[:8]
     return full_key, key_hash, key_prefix
 
 
