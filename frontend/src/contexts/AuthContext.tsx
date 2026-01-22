@@ -41,8 +41,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         // Auth not enabled, allow access
         setUser(null);
-        // Check if setup is needed
-        if (status.requires_setup && window.location.pathname !== '/setup') {
+        // Check if setup is needed (but exclude camera pages from redirect)
+        const currentPath = window.location.pathname;
+        const isCameraPage = currentPath.startsWith('/camera/');
+        if (status.requires_setup && currentPath !== '/setup' && !isCameraPage) {
           window.location.href = '/setup';
         }
       }

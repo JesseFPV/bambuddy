@@ -40,6 +40,26 @@ async def set_auth_enabled(db: AsyncSession, enabled: bool) -> None:
     # Note: Don't commit here - let get_db handle it or commit explicitly in the route
 
 
+async def is_setup_completed(db: AsyncSession) -> bool:
+    """Check if setup has been completed."""
+    result = await db.execute(select(Settings).where(Settings.key == "setup_completed"))
+    setting = result.scalar_one_or_none()
+    return setting and setting.value.lower() == "true"
+
+
+async def set_setup_completed(db: AsyncSession, completed: bool) -> None:
+    """Set setup completed status."""
+    from sqlalchemy import func
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    stmt = sqlite_insert(Settings).values(key="setup_completed", value="true" if completed else "false")
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["key"], set_={"value": "true" if completed else "false", "updated_at": func.now()}
+    )
+    await db.execute(stmt)
+    # Note: Don't commit here - let get_db handle it or commit explicitly in the route
+
+
 @router.post("/setup", response_model=SetupResponse)
 async def setup_auth(request: SetupRequest, db: AsyncSession = Depends(get_db)):
     """First-time setup: enable/disable authentication and create admin user."""
@@ -48,22 +68,28 @@ async def setup_auth(request: SetupRequest, db: AsyncSession = Depends(get_db)):
     logger = logging.getLogger(__name__)
 
     try:
-        # Check if auth is already configured (prevent re-setup)
+        # Check if setup has already been completed
+        setup_completed = await is_setup_completed(db)
+        
+        # Check if auth is already configured
         result = await db.execute(select(Settings).where(Settings.key == "auth_enabled"))
         existing_setting = result.scalar_one_or_none()
+        auth_currently_enabled = existing_setting and existing_setting.value.lower() == "true"
 
         # Check if users exist
         user_count_result = await db.execute(select(User))
         user_count = len(user_count_result.scalars().all())
 
-        if existing_setting and user_count > 0:
+        # If setup is completed and we're trying to enable auth with users already existing, prevent re-setup
+        if setup_completed and request.auth_enabled and auth_currently_enabled and user_count > 0:
             # Auth already configured and users exist - prevent re-setup
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Authentication is already configured. Use user management to modify users.",
             )
 
-        # If auth_enabled is true but no users exist, allow re-setup (recovery scenario)
+        # Allow disabling auth even if users exist (this is a valid use case)
+        # Allow enabling auth if it's currently disabled (re-enabling after disabling)
 
         admin_created = False
 
@@ -102,14 +128,16 @@ async def setup_auth(request: SetupRequest, db: AsyncSession = Depends(get_db)):
                     detail=f"Failed to create admin user: {str(e)}",
                 )
 
-        # Set auth enabled and commit everything together
+        # Set auth enabled and mark setup as completed
         await set_auth_enabled(db, request.auth_enabled)
+        await set_setup_completed(db, True)
         await db.commit()
 
         if admin_created:
             await db.refresh(admin_user)
             logger.info(f"Admin user created successfully: {admin_user.id}")
 
+        logger.info(f"Setup completed: auth_enabled={request.auth_enabled}, admin_created={admin_created}")
         return SetupResponse(auth_enabled=request.auth_enabled, admin_created=admin_created)
     except HTTPException:
         raise
@@ -126,7 +154,10 @@ async def setup_auth(request: SetupRequest, db: AsyncSession = Depends(get_db)):
 async def get_auth_status(db: AsyncSession = Depends(get_db)):
     """Get authentication status (public endpoint)."""
     auth_enabled = await is_auth_enabled(db)
-    return {"auth_enabled": auth_enabled, "requires_setup": not auth_enabled}
+    setup_completed = await is_setup_completed(db)
+    # Only require setup if it hasn't been completed yet
+    requires_setup = not setup_completed
+    return {"auth_enabled": auth_enabled, "requires_setup": requires_setup}
 
 
 @router.post("/disable", response_model=dict)
