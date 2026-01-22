@@ -13,7 +13,7 @@ class APIKey(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100))  # User-friendly name
-    key_hash: Mapped[str] = mapped_column(String(64))  # SHA256 hash of the key
+    key_hash: Mapped[str] = mapped_column(String(64))  # Hash of the key (SHA256 hex or pbkdf2_sha256)
     key_prefix: Mapped[str] = mapped_column(String(8))  # First 8 chars for identification
 
     # Permissions

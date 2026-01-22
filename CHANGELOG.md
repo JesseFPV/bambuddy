@@ -2,6 +2,21 @@
 
 All notable changes to Bambuddy will be documented in this file.
 
+## [0.1.6b11] - 2026-01-22
+
+### New Features
+- **Home Assistant Energy Sensor Support** - HA smart plugs can now use separate sensor entities for energy monitoring:
+  - Configure dedicated power sensor (W), today's energy (kWh), and total energy (kWh) sensors
+  - Supports plugs where energy data is exposed as separate sensor entities (common with Tapo, IKEA Zigbee2mqtt, etc.)
+  - Energy sensors are selectable from all available HA sensors with power/energy units
+  - Falls back to switch entity attributes if no sensors configured
+  - Print energy tracking now works correctly for HA plugs (not just Tasmota)
+  - New API endpoint: `GET /api/v1/smart-plugs/ha/sensors` to list available energy sensors
+
+### Fixed
+- **Filament cost using wrong default** - Statistics now correctly uses the "Default filament cost (per kg)" setting instead of hardcoded €25 value (Issue #120)
+- **Spoolman tag field not auto-created** - The required "tag" extra field is now automatically created in Spoolman on first connect, fixing sync failures for fresh Spoolman installs (Issue #123)
+
 ## [0.1.6b10] - 2026-01-21
 
 ### New Features
@@ -71,6 +86,14 @@ All notable changes to Bambuddy will be documented in this file.
   - Three-dot menu button always visible on mobile (hover-only on desktop)
   - Selection checkbox always visible on mobile devices
   - Better PWA experience for file management
+- **Optional Authentication** - Secure your Bambuddy instance with user authentication:
+  - Enable/disable authentication via Setup page or Settings → Users
+  - Role-based access control: Admin and User roles
+  - Admins have full access; Users can manage prints but not settings
+  - JWT-based authentication with 7-day token expiration
+  - User management page for creating, editing, and deleting users
+  - Backward compatible: existing installations work without authentication
+  - Settings page restricted to admin users when auth is enabled
 
 ### Changed
 - **Edit Queue Item modal** - Single printer selection only (reassigns item, doesn't duplicate)
