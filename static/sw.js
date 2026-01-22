@@ -21,7 +21,10 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(STATIC_CACHE).then((cache) => {
       console.log('[SW] Caching static assets');
-      return cache.addAll(STATIC_ASSETS);
+      return cache.addAll(STATIC_ASSETS).catch((err) => {
+        console.warn('[SW] Failed to cache some static assets:', err);
+        // Continue installation even if some assets fail to cache
+      });
     })
   );
   // Activate immediately
@@ -47,6 +50,12 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// Helper function to check if a URL can be cached
+function canCache(url) {
+  // Only cache http/https URLs, skip chrome-extension, chrome, and other schemes
+  return url.protocol === 'http:' || url.protocol === 'https:';
+}
+
 // Fetch event - network-first for API, cache-first for static
 self.addEventListener('fetch', (event) => {
   const { request } = event;
@@ -54,6 +63,11 @@ self.addEventListener('fetch', (event) => {
 
   // Skip non-GET requests
   if (request.method !== 'GET') {
+    return;
+  }
+
+  // Skip non-cacheable schemes (chrome-extension, chrome, etc.)
+  if (!canCache(url)) {
     return;
   }
 
@@ -94,11 +108,13 @@ self.addEventListener('fetch', (event) => {
           return cached;
         }
         return fetch(request).then((response) => {
-          // Cache successful responses
-          if (response.ok) {
+          // Cache successful responses (only if URL is cacheable)
+          if (response.ok && canCache(url)) {
             const clone = response.clone();
             caches.open(STATIC_CACHE).then((cache) => {
-              cache.put(request, clone);
+              cache.put(request, clone).catch((err) => {
+                console.warn('[SW] Failed to cache:', request.url, err);
+              });
             });
           }
           return response;
@@ -117,10 +133,12 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       caches.match(request).then((cached) => {
         const fetchPromise = fetch(request).then((response) => {
-          if (response.ok) {
+          if (response.ok && canCache(url)) {
             const clone = response.clone();
             caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, clone);
+              cache.put(request, clone).catch((err) => {
+                console.warn('[SW] Failed to cache:', request.url, err);
+              });
             });
           }
           return response;
@@ -135,10 +153,12 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(request)
       .then((response) => {
-        if (response.ok) {
+        if (response.ok && canCache(url)) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
-            cache.put(request, clone);
+            cache.put(request, clone).catch((err) => {
+              console.warn('[SW] Failed to cache:', request.url, err);
+            });
           });
         }
         return response;

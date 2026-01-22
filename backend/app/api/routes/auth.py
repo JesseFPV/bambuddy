@@ -70,39 +70,50 @@ async def setup_auth(request: SetupRequest, db: AsyncSession = Depends(get_db)):
         admin_created = False
 
         if request.auth_enabled:
-            if not request.admin_username or not request.admin_password:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Admin username and password are required when enabling authentication",
-                )
+            # Check if admin users already exist
+            admin_users_result = await db.execute(select(User).where(User.role == "admin"))
+            existing_admin_users = list(admin_users_result.scalars().all())
+            has_admin_users = len(existing_admin_users) > 0
 
-            # Check if admin already exists
-            existing_admin = await get_user_by_username(db, request.admin_username)
-            if existing_admin:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Admin user already exists",
-                )
+            if has_admin_users:
+                # Admin users already exist, just enable auth (don't create new admin)
+                logger.info("Admin users already exist, enabling authentication without creating new admin")
+                admin_created = False
+            else:
+                # No admin users exist, require admin credentials to create first admin
+                if not request.admin_username or not request.admin_password:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Admin username and password are required when enabling authentication (no admin users exist)",
+                    )
 
-            # Create admin user FIRST (before enabling auth)
-            try:
-                logger.info(f"Creating admin user: {request.admin_username}")
-                admin_user = User(
-                    username=request.admin_username,
-                    password_hash=get_password_hash(request.admin_password),
-                    role="admin",
-                    is_active=True,
-                )
-                db.add(admin_user)
-                logger.info(f"Admin user added to session: {request.admin_username}")
-                admin_created = True
-            except Exception as e:
-                await db.rollback()
-                logger.error(f"Failed to create admin user: {e}", exc_info=True)
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to create admin user: {str(e)}",
-                )
+                # Check if admin username already exists (shouldn't happen if no admin users exist, but check anyway)
+                existing_admin = await get_user_by_username(db, request.admin_username)
+                if existing_admin:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="User with this username already exists",
+                    )
+
+                # Create admin user FIRST (before enabling auth)
+                try:
+                    logger.info(f"Creating admin user: {request.admin_username}")
+                    admin_user = User(
+                        username=request.admin_username,
+                        password_hash=get_password_hash(request.admin_password),
+                        role="admin",
+                        is_active=True,
+                    )
+                    db.add(admin_user)
+                    logger.info(f"Admin user added to session: {request.admin_username}")
+                    admin_created = True
+                except Exception as e:
+                    await db.rollback()
+                    logger.error(f"Failed to create admin user: {e}", exc_info=True)
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to create admin user: {str(e)}",
+                    )
 
         # Set auth enabled and commit everything together
         await set_auth_enabled(db, request.auth_enabled)
@@ -128,7 +139,16 @@ async def setup_auth(request: SetupRequest, db: AsyncSession = Depends(get_db)):
 async def get_auth_status(db: AsyncSession = Depends(get_db)):
     """Get authentication status (public endpoint)."""
     auth_enabled = await is_auth_enabled(db)
-    return {"auth_enabled": auth_enabled, "requires_setup": not auth_enabled}
+    
+    # Check if there are any admin users
+    admin_users_result = await db.execute(select(User).where(User.role == "admin"))
+    has_admin_users = len(admin_users_result.scalars().all()) > 0
+    
+    # Only require setup if auth is not enabled AND no admin users exist
+    # If admin users exist, setup is already completed (even if auth is currently disabled)
+    requires_setup = not auth_enabled and not has_admin_users
+    
+    return {"auth_enabled": auth_enabled, "requires_setup": requires_setup}
 
 
 @router.post("/disable", response_model=dict)
